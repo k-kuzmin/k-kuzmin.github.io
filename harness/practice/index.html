@@ -462,6 +462,33 @@
   .chip-t-x { fill: var(--deny); }
   .note-t   { fill: var(--ink-3); font-family: var(--f-mono); font-size: 11.5px; }
 
+  /* ---------- хлебные крошки ---------- */
+
+  .masthead { padding-top: 2.2rem; }
+
+  .crumbs {
+    font-family: var(--f-mono);
+    font-size: 11.5px;
+    letter-spacing: .04em;
+    margin-bottom: 1.3rem;
+  }
+  .crumbs ol {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: .5rem;
+  }
+  .crumbs li + li::before {
+    content: "/";
+    color: var(--rule-2);
+    margin-right: .5rem;
+  }
+  .crumbs a { color: var(--ink-2); text-decoration: none; }
+  .crumbs a:hover { color: var(--stamp); text-decoration: underline; }
+  .crumbs [aria-current="page"] { color: var(--ink-3); }
+
   /* ---------- разбор рубежа ---------- */
 
   .gate-kv { display: grid; gap: .8rem; margin: 1.7rem 0 0; }
@@ -513,6 +540,13 @@
 <div class="sheet">
 
   <header class="masthead">
+    <nav class="crumbs" aria-label="Хлебные крошки">
+      <ol>
+        <li><a href="../../">Инженерные записки</a></li>
+        <li><a href="../">Обвязка агентского цикла</a></li>
+        <li aria-current="page">Шесть рубежей на практике</li>
+      </ol>
+    </nav>
     <p class="eyebrow">Записка вторая из двух · обезличено</p>
     <h1>Шесть рубежей на практике</h1>
     <p class="lede">Тот же цикл снизу: что за чем идёт, чем каждый участок пути защищён,
