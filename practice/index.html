@@ -1,0 +1,1238 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Как устроена механическая защита агентского пайплайна: сквозная карта пути задачи от issue до мерджа, шесть рубежей по отдельности и фрагменты из рабочего репозитория.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ctext y=%22.9em%22 font-size=%2290%22%3E%F0%9F%A7%B1%3C/text%3E%3C/svg%3E">
+<title>Шесть рубежей на практике</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&display=swap">
+
+<style>
+  :root {
+    --paper:    #F0F1EC;
+    --paper-2:  #E7E9E1;
+    --paper-3:  #DDE0D6;
+    --ink:      #16181C;
+    --ink-2:    #565C63;
+    --ink-3:    #5C636B;
+    --rule:     #C6CABF;
+    --rule-2:   #B0B5A8;
+    --stamp:    #2E2FA0;
+    --deny:     #9E2B1C;
+    --allow:    #2C6349;
+
+    --f-display: "Golos Text", "Segoe UI", system-ui, sans-serif;
+    --f-body:    "Literata", Georgia, "Times New Roman", serif;
+    --f-mono:    "JetBrains Mono", "Cascadia Mono", Consolas, monospace;
+
+    color-scheme: light;
+
+    --measure: 34rem;
+    --gutter: clamp(1.15rem, 4vw, 2.5rem);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:    #131519;
+      --paper-2:  #1A1D22;
+      --paper-3:  #22262C;
+      --ink:      #E6E7E1;
+      --ink-2:    #9AA0A7;
+      --ink-3:    #8A9199;
+      --rule:     #2E333A;
+      --rule-2:   #3C424A;
+      --stamp:    #A2A7FF;
+      --deny:     #E28B7A;
+      --allow:    #7FC0A1;
+      color-scheme: dark;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --paper:    #131519;
+    --paper-2:  #1A1D22;
+    --paper-3:  #22262C;
+    --ink:      #E6E7E1;
+    --ink-2:    #9AA0A7;
+    --ink-3:    #8A9199;
+    --rule:     #2E333A;
+    --rule-2:   #3C424A;
+    --stamp:    #A2A7FF;
+    --deny:     #E28B7A;
+    --allow:    #7FC0A1;
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--f-body);
+    font-size: 1.0625rem;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .sheet {
+    max-width: 62rem;
+    margin: 0 auto;
+    padding: 0 var(--gutter) 5rem;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+
+  /* ---------- rail ---------- */
+
+  .rail { display: none; }
+
+  @media (min-width: 68rem) {
+    .sheet {
+      grid-template-columns: 9rem minmax(0, 1fr);
+      column-gap: 2.5rem;
+      max-width: 76rem;
+    }
+    .rail {
+      display: block;
+      grid-column: 1;
+      grid-row: 2;
+      position: sticky;
+      top: 2.5rem;
+      align-self: start;
+      font-family: var(--f-mono);
+      font-size: 11.5px;
+      line-height: 1.5;
+      border-top: 2px solid var(--ink);
+      padding-top: .7rem;
+    }
+    .rail ol { list-style: none; margin: 0; padding: 0; display: grid; gap: .55rem; }
+    .rail a { color: var(--ink-2); text-decoration: none; display: block; }
+    .rail a:hover { color: var(--stamp); }
+    .rail .rail-num { color: var(--ink-3); margin-right: .45rem; }
+    .flow { grid-column: 2; grid-row: 2; }
+    .masthead { grid-column: 1 / -1; grid-row: 1; }
+  }
+
+  .flow { min-width: 0; }
+
+  /* ---------- masthead ---------- */
+
+  .masthead {
+    border-bottom: 2px solid var(--ink);
+    padding: 3.5rem 0 1.6rem;
+    margin-bottom: 2.8rem;
+  }
+
+  .eyebrow {
+    font-family: var(--f-mono);
+    font-size: 11.5px;
+    letter-spacing: .13em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    margin: 0 0 1.4rem;
+  }
+
+  h1 {
+    font-family: var(--f-display);
+    font-weight: 700;
+    font-size: clamp(2.4rem, 7vw, 4rem);
+    line-height: 1.02;
+    letter-spacing: -.022em;
+    text-wrap: balance;
+    margin: 0 0 1.1rem;
+    max-width: 16ch;
+  }
+
+  .lede {
+    font-size: 1.16rem;
+    line-height: 1.55;
+    color: var(--ink-2);
+    max-width: 42ch;
+    margin: 0;
+  }
+
+  .stamp-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 1.4rem;
+    margin-top: 2.2rem;
+  }
+
+  .stamp {
+    font-family: var(--f-mono);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: var(--stamp);
+    border: 2px solid var(--stamp);
+    border-radius: 2px;
+    padding: .5rem .8rem;
+    transform: rotate(-2.4deg);
+    line-height: 1.35;
+    text-align: center;
+    opacity: .92;
+  }
+
+  .figures {
+    font-family: var(--f-mono);
+    font-size: 11.5px;
+    color: var(--ink-2);
+    font-variant-numeric: tabular-nums;
+    line-height: 1.9;
+  }
+  .figures b { color: var(--ink); font-weight: 500; }
+
+  /* ---------- sections ---------- */
+
+  section { margin-bottom: 3.4rem; scroll-margin-top: 2rem; }
+
+  .sec-label {
+    font-family: var(--f-mono);
+    font-size: 11px;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    border-top: 1px solid var(--rule);
+    padding-top: .5rem;
+    margin: 0 0 1.1rem;
+  }
+
+  h2 {
+    font-family: var(--f-display);
+    font-weight: 600;
+    font-size: clamp(1.5rem, 3.4vw, 1.95rem);
+    line-height: 1.15;
+    letter-spacing: -.015em;
+    text-wrap: balance;
+    margin: 0 0 1rem;
+    max-width: 24ch;
+  }
+
+  h3 {
+    font-family: var(--f-display);
+    font-weight: 600;
+    font-size: 1.05rem;
+    letter-spacing: -.005em;
+    margin: 2rem 0 .5rem;
+  }
+
+  p { margin: 0 0 1.05rem; max-width: var(--measure); }
+  p:last-child { margin-bottom: 0; }
+
+  a { color: var(--stamp); }
+  strong { font-weight: 600; }
+  em { font-style: italic; }
+
+  code, .mono {
+    font-family: var(--f-mono);
+    font-size: .855em;
+    background: var(--paper-2);
+    padding: .1em .32em;
+    border-radius: 2px;
+  }
+
+  .pull {
+    font-family: var(--f-display);
+    font-weight: 500;
+    font-size: 1.22rem;
+    line-height: 1.4;
+    letter-spacing: -.012em;
+    color: var(--ink);
+    border-left: 3px solid var(--stamp);
+    padding: .15rem 0 .15rem 1.1rem;
+    margin: 1.8rem 0;
+    max-width: 34ch;
+  }
+
+  /* ---------- invariants ---------- */
+
+  .cards { display: grid; gap: 1.4rem; margin-top: 1.8rem; }
+
+  .card {
+    border-top: 1px solid var(--rule-2);
+    padding-top: 1rem;
+    display: grid;
+    gap: .75rem;
+  }
+
+  @media (min-width: 46rem) {
+    .card { grid-template-columns: 13rem minmax(0, 1fr); column-gap: 2rem; }
+    .card-rule { grid-column: 1; }
+    .card-body { grid-column: 2; }
+  }
+
+  .card-rule {
+    font-family: var(--f-display);
+    font-weight: 600;
+    font-size: 1rem;
+    line-height: 1.3;
+    letter-spacing: -.008em;
+  }
+
+  .card-body { display: grid; gap: .5rem; }
+  .card-mech {
+    font-family: var(--f-mono);
+    font-size: 11px;
+    color: var(--ink-3);
+    letter-spacing: .04em;
+  }
+
+  .kv { display: grid; gap: .18rem; }
+  .kv > dt {
+    font-family: var(--f-mono);
+    font-size: 10.5px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+  .kv > dd { margin: 0; font-size: .95rem; line-height: 1.52; }
+  .kv.cost > dd { color: var(--ink-2); }
+
+  /* ---------- table ---------- */
+
+  .scroller { overflow-x: auto; margin: 1.6rem 0; }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    min-width: 40rem;
+    font-family: var(--f-mono);
+    font-size: 12px;
+    line-height: 1.45;
+  }
+  th, td {
+    text-align: left;
+    vertical-align: top;
+    padding: .58rem .8rem .58rem 0;
+    border-bottom: 1px solid var(--rule);
+  }
+  thead th {
+    border-bottom: 1.5px solid var(--ink);
+    font-weight: 500;
+    letter-spacing: .09em;
+    text-transform: uppercase;
+    font-size: 10.5px;
+    color: var(--ink-3);
+    white-space: nowrap;
+  }
+  td.step { color: var(--ink); font-weight: 500; white-space: nowrap; }
+  td.dim { color: var(--ink-2); }
+
+  table.t-prose { font-family: var(--f-body); font-size: 13.5px; line-height: 1.45; min-width: 44rem; }
+  table.t-prose td.tier {
+    font-family: var(--f-mono);
+    font-size: 11px;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: var(--ink);
+    white-space: nowrap;
+    width: 8.5rem;
+    border-right: 1px solid var(--rule);
+    padding-right: 1rem;
+    padding-top: .7rem;
+  }
+  table.t-prose td.mech { font-family: var(--f-mono); font-size: 11.5px; width: 15rem; color: var(--ink-2); }
+  table.t-prose td.stops { color: var(--ink); }
+  .no  { color: var(--deny); }
+  .yes { color: var(--allow); }
+
+  /* ---------- snippets ---------- */
+
+  .snips { display: grid; gap: 1.1rem; margin-top: 1.6rem; }
+  @media (min-width: 54rem) { .snips { grid-template-columns: 1fr 1fr; align-items: start; } }
+
+  .snip {
+    border: 1px solid var(--rule);
+    border-radius: 2px;
+    background: var(--paper-2);
+    overflow: hidden;
+  }
+  .snip-head {
+    font-family: var(--f-mono);
+    font-size: 10.5px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    background: var(--paper);
+    border-bottom: 1px solid var(--rule);
+    padding: .5rem .85rem;
+    margin: 0;
+  }
+  .snip-head b { color: var(--ink); font-weight: 500; }
+  .snip pre {
+    margin: 0;
+    padding: .8rem .85rem;
+    overflow-x: auto;
+    font-family: var(--f-mono);
+    font-size: 11.5px;
+    line-height: 1.6;
+    color: var(--ink);
+    tab-size: 2;
+  }
+  .snip pre code { background: none; padding: 0; font-size: inherit; }
+  .snip-head code { background: var(--paper-3); }
+
+  /* ---------- refusal block ---------- */
+
+  .refusal {
+    font-family: var(--f-mono);
+    font-size: 12.5px;
+    line-height: 1.6;
+    color: var(--deny);
+    border: 1px dashed var(--deny);
+    border-radius: 2px;
+    padding: .85rem 1rem;
+    margin: 1.6rem 0;
+    max-width: var(--measure);
+  }
+  .refusal span { display: block; color: var(--ink-3); font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; margin-bottom: .5rem; }
+
+  /* ---------- figures ---------- */
+
+  figure { margin: 2rem 0; }
+  .figscroll { overflow-x: auto; }
+  figure svg { display: block; width: 100%; height: auto; color: var(--ink); min-width: 40rem; }
+  figcaption {
+    font-size: .88rem;
+    line-height: 1.5;
+    color: var(--ink-2);
+    margin-top: .75rem;
+    max-width: 60ch;
+  }
+  .svg-box { fill: var(--paper-2); stroke: var(--rule-2); stroke-width: 1.25; }
+  .svg-box-key { fill: var(--paper-3); stroke: var(--ink); stroke-width: 1.5; }
+  .svg-t { fill: var(--ink); font-family: var(--f-display); font-size: 13px; font-weight: 500; }
+  .svg-s { fill: var(--ink-2); font-family: var(--f-mono); font-size: 10.5px; }
+  .svg-line { stroke: var(--ink-2); stroke-width: 1.25; fill: none; }
+  .svg-deny { stroke: var(--deny); }
+  .svg-deny-t { fill: var(--deny); }
+  .svg-allow { stroke: var(--allow); }
+  .svg-allow-t { fill: var(--allow); }
+  .mk      { fill: var(--ink-2); }
+  .mk-deny { fill: var(--deny); }
+  .mk-allow{ fill: var(--allow); }
+
+  /* ---------- limits ---------- */
+
+  .limits { display: grid; gap: 1.1rem; margin-top: 1.6rem; list-style: none; padding: 0; }
+  .limits li {
+    border-left: 2px solid var(--rule-2);
+    padding-left: 1rem;
+    max-width: var(--measure);
+    font-size: .97rem;
+    line-height: 1.55;
+  }
+  .limits b { font-family: var(--f-display); font-weight: 600; }
+
+  /* ---------- colophon ---------- */
+
+  .colophon {
+    border-top: 2px solid var(--ink);
+    margin-top: 4rem;
+    padding-top: 1.2rem;
+    font-family: var(--f-mono);
+    font-size: 11.5px;
+    line-height: 1.75;
+    color: var(--ink-3);
+    max-width: 52ch;
+  }
+
+  a:focus-visible, .rail a:focus-visible,
+  .scroller:focus-visible, .figscroll:focus-visible, .snip pre:focus-visible {
+    outline: 2px solid var(--stamp);
+    outline-offset: 3px;
+    border-radius: 1px;
+  }
+  /* ---------- карта ---------- */
+
+  .svg-h    { fill: var(--ink-3); font-family: var(--f-mono); font-size: 10.5px; letter-spacing: .12em; }
+  .chip     { fill: var(--paper-2); stroke: var(--rule-2); stroke-width: 1; }
+  .chip-h   { fill: var(--paper-3); stroke: var(--ink); stroke-width: 1.25; }
+  .chip-x   { fill: none; stroke: var(--deny); stroke-width: 1.25; stroke-dasharray: 5 4; }
+  .chip-t   { fill: var(--ink); font-family: var(--f-mono); font-size: 12px; }
+  .chip-k   { fill: var(--ink-3); }
+  .chip-k-h { fill: var(--stamp); }
+  .chip-t-x { fill: var(--deny); }
+  .note-t   { fill: var(--ink-3); font-family: var(--f-mono); font-size: 11.5px; }
+
+  /* ---------- разбор рубежа ---------- */
+
+  .gate-kv { display: grid; gap: .8rem; margin: 1.7rem 0 0; }
+
+  @media (min-width: 46rem) {
+    .gate-kv {
+      grid-template-columns: 9.5rem minmax(0, 1fr);
+      column-gap: 1.8rem;
+      row-gap: .85rem;
+    }
+    .gate-kv dt { grid-column: 1; }
+    .gate-kv dd { grid-column: 2; }
+  }
+
+  .gate-kv dt {
+    font-family: var(--f-mono);
+    font-size: 10.5px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    padding-top: .3rem;
+  }
+  .gate-kv dt.why-dt { color: var(--stamp); }
+  .gate-kv dd { margin: 0; font-size: .97rem; line-height: 1.52; max-width: 46ch; }
+  .gate-kv dd.why { border-left: 2px solid var(--stamp); padding-left: .85rem; }
+  .gate-kv dd.why-neg { color: var(--ink-2); }
+
+  section > .snip { margin-top: 1.6rem; }
+
+  /* Фрагменты на этой странице длиннее строки: одна колонка вместо двух,
+     иначе каждый второй фрагмент читается через горизонтальную прокрутку. */
+  .snips { grid-template-columns: 1fr; }
+  @media (min-width: 54rem) { .snips { grid-template-columns: 1fr; } }
+
+  .next {
+    font-family: var(--f-display);
+    font-weight: 600;
+    font-size: 1.16rem;
+    letter-spacing: -.012em;
+    text-decoration: none;
+    border-bottom: 2px solid var(--stamp);
+    padding-bottom: .1rem;
+  }
+  .next:hover { color: var(--ink); border-color: var(--ink); }
+</style>
+
+</head>
+<body>
+<div class="sheet">
+
+  <header class="masthead">
+    <p class="eyebrow">Записка вторая из двух · обезличено</p>
+    <h1>Шесть рубежей на практике</h1>
+    <p class="lede">Тот же цикл снизу: что за чем идёт, чем каждый участок пути защищён,
+      что этот механизм читает и от чего он спасает. Фрагменты — из рабочего репозитория.</p>
+    <div class="stamp-row">
+      <div class="stamp">Отказ дешевле,<br>чем починка</div>
+      <div class="figures">
+        <b>13</b> стадий пути · <b>6</b> рубежей<br>
+        <b>5</b> классов защиты: сессия, хук, CI, метка, человек<br>
+        <b>1</b> рубеж из шести — не механизм, и это сказано прямо
+      </div>
+    </div>
+  </header>
+
+  <nav class="rail" aria-label="Разделы">
+    <ol>
+      <li><a href="#karta"><span class="rail-num">01</span>Карта</a></li>
+      <li><a href="#sessiya"><span class="rail-num">02</span>Сессия</a></li>
+      <li><a href="#kommit"><span class="rail-num">03</span>Коммит</a></li>
+      <li><a href="#sborka"><span class="rail-num">04</span>Сборка</a></li>
+      <li><a href="#pr"><span class="rail-num">05</span>PR</a></li>
+      <li><a href="#chernovik"><span class="rail-num">06</span>Черновик снят</a></li>
+      <li><a href="#merzh"><span class="rail-num">07</span>Мердж</a></li>
+      <li><a href="#granicy"><span class="rail-num">08</span>Границы шага</a></li>
+      <li><a href="#predely"><span class="rail-num">09</span>Предел механики</a></li>
+      <li><a href="../"><span class="rail-num">←</span>Замысел</a></li>
+    </ol>
+  </nav>
+
+  <main class="flow">
+
+    <section id="karta">
+      <p class="sec-label">Карта</p>
+      <h2>Путь задачи и защита на каждом участке</h2>
+      <p>Слева — порядок стадий от issue до мерджа. Справа — что стоит на каждой из них.
+        Первое слово в чипе говорит, чем держится защита: <b>сессия</b> — механика субагента,
+        <b>хук</b> — git до создания коммита, <b>CI</b> — работа на сервере, <b>метка</b> —
+        состояние, живущее вне сессии, <b>человек</b> — разрешение, которое не выдаётся
+        автоматически.</p>
+
+      <figure>
+        <div class="figscroll" tabindex="0" role="group" aria-label="Большая схема, прокручивается по горизонтали">
+        <svg viewBox="0 0 760 1196" role="img" aria-label="Сквозная карта: задача, триаж, план, апрув плана, реализация, коммит, пуш ветки, черновой PR, быстрая проверка, два ревью, починка, снятие черновика, мердж. На каждой стадии перечислено, чем она защищена: механика субагента, git-хуки, работы CI, метки-счётчики и разрешения человека. Починка возвращает поток к быстрой проверке и кругу ревью. Последняя стадия, мердж, механизмом не защищена.">
+          <defs>
+            <marker id="m1" viewBox="0 0 10 8" refX="9" refY="4" markerWidth="7" markerHeight="6" orient="auto-start-reverse">
+              <polygon class="mk" points="0,0 10,4 0,8"></polygon>
+            </marker>
+          </defs>
+
+          <text class="svg-h" x="140" y="20">ПУТЬ ЗАДАЧИ</text>
+          <text class="svg-h" x="380" y="20">ЧЕМ ЗАЩИЩЁН УЧАСТОК</text>
+
+          <rect class="svg-box-key" x="140" y="37" width="200" height="46" rx="2"></rect>
+          <text class="svg-t" x="240" y="58" text-anchor="middle">Задача</text>
+          <text class="svg-s" x="240" y="74" text-anchor="middle">issue с критерием приёмки</text>
+          <rect class="chip-h" x="380" y="42" width="356" height="24" rx="2"></rect>
+          <text class="chip-t" x="392" y="58"><tspan class="chip-k-h">человек · </tspan>метка «ready» — до неё триажа нет</text>
+          <line class="svg-line" x1="240" y1="85" x2="240" y2="128" marker-end="url(#m1)"></line>
+
+          <rect class="svg-box" x="140" y="132" width="200" height="46" rx="2"></rect>
+          <text class="svg-t" x="240" y="161" text-anchor="middle">Триаж</text>
+          <rect class="chip" x="380" y="110" width="356" height="24" rx="2"></rect>
+          <text class="chip-t" x="392" y="126"><tspan class="chip-k">сессия · </tspan>нет Edit и Write: правка недоступна</text>
+          <rect class="chip" x="380" y="140" width="356" height="24" rx="2"></rect>
+          <text class="chip-t" x="392" y="156"><tspan class="chip-k">сессия · </tspan>команда вне списка шага — отказ</text>
+          <rect class="chip" x="380" y="170" width="356" height="24" rx="2"></rect>
+          <text class="chip-t" x="392" y="186"><tspan class="chip-k">сессия · </tspan>младшая модель, потолок ходов</text>
+          <line class="svg-line" x1="240" y1="180" x2="240" y2="223" marker-end="url(#m1)"></line>
+
+          <rect class="svg-box" x="140" y="227" width="200" height="46" rx="2"></rect>
+          <text class="svg-t" x="240" y="256" text-anchor="middle">План</text>
+          <rect class="chip" x="380" y="232" width="356" height="24" rx="2"></rect>
+          <text class="chip-t" x="392" y="248"><tspan class="chip-k">сессия · </tspan>план публикует оркестратор, не шаг</text>
+          <line class="svg-line" x1="240" y1="275" x2="240" y2="291" marker-end="url(#m1)"></line>
+
+          <rect class="svg-box-key" x="140" y="295" width="200" height="46" rx="2"></rect>
+          <text class="svg-t" x="240" y="324" text-anchor="middle">Апрув плана</text>
+          <rect class="chip-h" x="380" y="300" width="356" height="24" rx="2"></rect>
+          <text class="chip-t" x="392" y="316"><tspan class="chip-k-h">человек · </tspan>метка «plan/approved» — до неё кода нет</text>
+          <line class="svg-line" x1="240" y1="343" x2="240" y2="371" marker-end="url(#m1)"></line>
+
+          <rect class="svg-box" x="140" y="375" width="200" height="46" rx="2"></rect>
+          <text class="svg-t" x="240" y="404" text-anchor="middle">Реализация</text>
+          <rect class="chip" x="380" y="368" width="356" height="24" rx="2"></rect>
+          <text class="chip-t" x="392" y="384"><tspan class="chip-k">сессия · </tspan>правка выдана; dotnet ef — не выдан</text>
+          <rect class="chip" x="380" y="398" width="356" height="24" rx="2"></rect>
+          <text class="chip-t" x="392" y="414"><tspan class="chip-k">сессия · </tspan>--no-verify и force-push отбиты поимённо</text>
+          <line class="svg-line" x1="240" y1="423" x2="240" y2="463" marker-end="url(#m1)"></line>
+
+          <rect class="svg-box" x="140" y="467" width="200" height="46" rx="2"></rect>
+          <text class="svg-t" x="240" y="496" text-anchor="middle">Коммит</text>
+          <rect class="chip" x="380" y="460" width="356" height="24" rx="2"></rect>
+          <text class="chip-t" x="392" y="476"><tspan class="chip-k">хук · </tspan>gitleaks по индексу; нет его — нет коммита</text>
+          <rect class="chip" x="380" y="490" width="356" height="24" rx="2"></rect>
+          <text class="chip-t" x="392" y="506"><tspan class="chip-k">хук · </tspan>формат сообщения, до создания коммита</text>
+          <line class="svg-line" x1="240" y1="515" x2="240" y2="543" marker-end="url(#m1)"></line>
+
+          <rect class="svg-box" x="140" y="547" width="200" height="46" rx="2"></rect>
+          <text class="svg-t" x="240" y="576" text-anchor="middle">Пуш ветки</text>
+          <text class="note-t" x="392" y="576">не рубеж · пушить рано и часто</text>
+          <line class="svg-line" x1="240" y1="595" x2="240" y2="611" marker-end="url(#m1)"></line>
+
+          <rect class="svg-box" x="140" y="615" width="200" height="46" rx="2"></rect>
+          <text class="svg-t" x="240" y="644" text-anchor="middle">Черновой PR</text>
+          <text class="note-t" x="392" y="644">не рубеж · открывается на готовой реализации</text>
+          <line class="svg-line" x1="240" y1="663" x2="240" y2="721" marker-end="url(#m1)"></line>
+
+          <rect class="svg-box" x="140" y="725" width="200" height="46" rx="2"></rect>
+          <text class="svg-t" x="240" y="754" text-anchor="middle">Быстрая проверка</text>
+          <rect class="chip" x="380" y="688" width="356" height="24" rx="2"></rect>
+          <text class="chip-t" x="392" y="704"><tspan class="chip-k">CI · </tspan>предупреждение компилятора = красная сборка</text>
+          <rect class="chip" x="380" y="718" width="356" height="24" rx="2"></rect>
+          <text class="chip-t" x="392" y="734"><tspan class="chip-k">CI · </tspan>архитектурный тест: ссылка из ядра наружу</text>
+          <rect class="chip" x="380" y="748" width="356" height="24" rx="2"></rect>
+          <text class="chip-t" x="392" y="764"><tspan class="chip-k">CI · </tspan>порог покрытия по строкам</text>
+          <rect class="chip" x="380" y="778" width="356" height="24" rx="2"></rect>
+          <text class="chip-t" x="392" y="794"><tspan class="chip-k">CI · </tspan>гейт целостности по диффу; сверки обвязки</text>
+          <line class="svg-line" x1="240" y1="773" x2="240" y2="843" marker-end="url(#m1)"></line>
+
+          <rect class="svg-box" x="140" y="847" width="200" height="46" rx="2"></rect>
+          <text class="svg-t" x="240" y="868" text-anchor="middle">Ревью × 2</text>
+          <text class="svg-s" x="240" y="884" text-anchor="middle">корректность, безопасность</text>
+          <rect class="chip" x="380" y="840" width="356" height="24" rx="2"></rect>
+          <text class="chip-t" x="392" y="856"><tspan class="chip-k">сессия · </tspan>дифф читает сам, пересказ не передаётся</text>
+          <rect class="chip" x="380" y="870" width="356" height="24" rx="2"></rect>
+          <text class="chip-t" x="392" y="886"><tspan class="chip-k">метка · </tspan>review/N: кругов ревью не больше двух</text>
+          <line class="svg-line" x1="240" y1="895" x2="240" y2="935" marker-end="url(#m1)"></line>
+
+          <rect class="svg-box" x="140" y="939" width="200" height="46" rx="2"></rect>
+          <text class="svg-t" x="240" y="968" text-anchor="middle">Починка</text>
+          <rect class="chip" x="380" y="932" width="356" height="24" rx="2"></rect>
+          <text class="chip-t" x="392" y="948"><tspan class="chip-k">сессия · </tspan>случайность падения оценивает чтец</text>
+          <rect class="chip" x="380" y="962" width="356" height="24" rx="2"></rect>
+          <text class="chip-t" x="392" y="978"><tspan class="chip-k">метка · </tspan>fix/N: попыток три, дальше человек</text>
+          <line class="svg-line" x1="240" y1="987" x2="240" y2="1027" marker-end="url(#m1)"></line>
+
+          <path class="svg-line" d="M140 962 L100 962 L100 748 L136 748" marker-end="url(#m1)"></path>
+          <text class="note-t" x="8" y="846">повтор</text>
+          <text class="note-t" x="8" y="860">круга</text>
+
+          <rect class="svg-box" x="140" y="1031" width="200" height="46" rx="2"></rect>
+          <text class="svg-t" x="240" y="1052" text-anchor="middle">Черновик снят</text>
+          <text class="svg-s" x="240" y="1068" text-anchor="middle">тяжёлая проверка</text>
+          <rect class="chip" x="380" y="1024" width="356" height="24" rx="2"></rect>
+          <text class="chip-t" x="392" y="1040"><tspan class="chip-k">CI · </tspan>стек на .example: /health, 401, логи</text>
+          <rect class="chip" x="380" y="1054" width="356" height="24" rx="2"></rect>
+          <text class="chip-t" x="392" y="1070"><tspan class="chip-k">CI · </tspan>CodeQL</text>
+          <line class="svg-line" x1="240" y1="1079" x2="240" y2="1107" marker-end="url(#m1)"></line>
+
+          <rect class="svg-box-key" x="140" y="1111" width="200" height="46" rx="2"></rect>
+          <text class="svg-t" x="240" y="1140" text-anchor="middle">Мердж</text>
+          <rect class="chip-x" x="380" y="1122" width="356" height="24" rx="2"></rect>
+          <text class="chip-t chip-t-x" x="392" y="1138">человек · апрув. Сегодня — порядок, не механика</text>
+        </svg>
+        </div>
+        <figcaption>Стадий тринадцать, рубежей шесть: часть стадий защиты не несёт и стоит
+          в карте потому, что без них не читается порядок. Пунктирный чип внизу — то, чего
+          сегодня нет.</figcaption>
+      </figure>
+    </section>
+
+    <section id="sessiya">
+      <p class="sec-label">Рубеж 01</p>
+      <h2>Сессия: чего у шага нет, того он не сделает</h2>
+      <p>Определение шага — файл в репозитории. В нём набор инструментов, список
+        разрешённых команд, модель и потолок ходов. Всё это читается до запуска шага и
+        не зависит от того, что модель считает уместным.</p>
+
+      <dl class="gate-kv">
+        <dt>чем срабатывает</dt>
+        <dd>Набор инструментов — рамка сессии; хук на каждый вызов <code>Bash</code> —
+          проверка команды до исполнения.</dd>
+        <dt>что читает</dt>
+        <dd>Сам вызов инструмента: имя инструмента и строку команды.</dd>
+        <dt>что отбивает</dt>
+        <dd>Правку файлов у читающего шага — <code>Edit</code> и <code>Write</code> ему не
+          выданы. Команду вне списка шага — включая вторую команду в конвейере и спрятанную
+          в подстановке.</dd>
+        <dt class="why-dt">от чего защищает</dt>
+        <dd class="why">От ревьюера, который «заодно поправил мелочь» в проверяемом диффе:
+          такая правка приезжает в PR без ревью, потому что ревьюер её и сделал. И от шага,
+          у которого спросили дифф, а он на всякий случай запустил миграцию базы.</dd>
+      </dl>
+
+      <div class="snips">
+        <div class="snip">
+          <p class="snip-head">Читающий шаг · <b>ревью корректности</b></p>
+<pre><code>tools: Read, Glob, Grep, Bash
+hooks:
+  PreToolUse:
+    - matcher: Bash
+      hooks:
+        - type: command
+          command: &gt;-
+            bash "$CLAUDE_PROJECT_DIR/scripts/step-bash-allow.sh"
+            'gh pr diff' 'gh pr view' 'gh pr checks' 'gh issue view'
+            'grep' 'head' 'tail' 'pwd'</code></pre>
+        </div>
+
+        <div class="snip">
+          <p class="snip-head">Пишущий шаг · <b>реализация</b></p>
+<pre><code>tools: Read, Glob, Grep, Edit, Write, Bash
+          command: &gt;-
+            bash "$CLAUDE_PROJECT_DIR/scripts/step-bash-allow.sh"
+            'dotnet restore' 'dotnet build' 'dotnet test' 'dotnet format'
+            'git checkout' 'git switch' 'git status' 'git diff' 'git log'
+            'git add' 'git commit' 'git push'
+            'gh issue view' 'gh pr create' 'gh pr view' 'gh pr edit'
+            'grep' 'head' 'tail'
+            'bash scripts/rules-sync.sh' 'bash scripts/wiring.sh' …</code></pre>
+        </div>
+      </div>
+
+      <p>Разница между двумя определениями — не в тоне инструкции, а в двух строках:
+        <code>Edit, Write</code> и список команд. <code>dotnet ef</code> не выдан ни одному
+        шагу: миграция — решение человека.</p>
+
+      <h3>Что отбито поимённо</h3>
+      <p>Списка команд мало: у разрешённой команды бывает флаг, отменяющий рубеж
+        уровнем ниже. Такие флаги перечислены отдельно, и отказ на каждый объясняет причину.</p>
+
+      <div class="scroller" tabindex="0" role="group" aria-label="Таблица, прокручивается по горизонтали">
+        <table>
+          <thead>
+            <tr><th>Что отбито</th><th>Причина отказа, из текста проверки</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="step">--no-verify у git commit</td>
+              <td class="dim">выключает pre-commit с gitleaks</td>
+            </tr>
+            <tr>
+              <td class="step">-n у git commit</td>
+              <td class="dim">тот же --no-verify, только короче</td>
+            </tr>
+            <tr>
+              <td class="step">--force у git push</td>
+              <td class="dim">перезапись истории ветки, которую уже видели CI и ревью, —
+                решение человека, а не шага</td>
+            </tr>
+            <tr>
+              <td class="step">--output у git и gh</td>
+              <td class="dim">делает из читающей команды запись в файл, минуя набор
+                инструментов</td>
+            </tr>
+            <tr>
+              <td class="step">правка меток agent/allow-*</td>
+              <td class="dim">это разрешения человека, и снимать их себе шаг не может</td>
+            </tr>
+            <tr>
+              <td class="step">подстановка $(…)</td>
+              <td class="dim">внутри неё прячется вторая команда, и список разрешённого её
+                не видит</td>
+            </tr>
+            <tr>
+              <td class="step">перенаправление вывода</td>
+              <td class="dim">это канал записи в обход набора инструментов</td>
+            </tr>
+            <tr>
+              <td class="step">перенаправление ввода &lt;(…)</td>
+              <td class="dim">внутри запускается команда, которой в списке нет</td>
+            </tr>
+            <tr>
+              <td class="step">фоновый запуск</td>
+              <td class="dim">результат такой команды не виден ни шагу, ни этой проверке</td>
+            </tr>
+            <tr>
+              <td class="step">незакрытая кавычка</td>
+              <td class="dim">разобрать команду на части нельзя, а пропустить неразобранное
+                хук не может</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>Отдельный случай — отсутствие <code>jq</code>, которым хук разбирает вход. Без него
+        отказ получают все вызовы <code>Bash</code>, а не пропускаются молча: непроверенная
+        команда и разрешённая команда — не одно и то же.</p>
+    </section>
+
+    <section id="kommit">
+      <p class="sec-label">Рубеж 02</p>
+      <h2>Коммит: до создания, а не после</h2>
+
+      <dl class="gate-kv">
+        <dt>чем срабатывает</dt>
+        <dd>Два git-хука в репозитории: <code>pre-commit</code> и <code>commit-msg</code>.</dd>
+        <dt>что читает</dt>
+        <dd>Индекс — то, что коммитится, а не рабочий каталог целиком. И текст сообщения.</dd>
+        <dt>что отбивает</dt>
+        <dd>Секрет в индексе; заголовок не по Conventional Commits. И отсутствие самого
+          инструмента поиска секретов.</dd>
+        <dt class="why-dt">от чего защищает</dt>
+        <dd class="why">От секрета в истории. Коммит с токеном не лечится следующим
+          коммитом: значение остаётся в истории навсегда, и чинить придётся перезаписью
+          ветки — а токен к этому моменту уже утёк.</dd>
+      </dl>
+
+      <div class="snips">
+        <div class="snip">
+          <p class="snip-head">pre-commit · <b>секреты в индексе</b></p>
+<pre><code>if ! "$GITLEAKS" git --staged --redact --no-banner --log-level warn .; then
+    cat &gt;&amp;2 &lt;&lt;'MSG'
+
+  Коммит отклонён: gitleaks нашёл секрет или приватные данные.
+
+  Значения в выводе выше отредактированы. Что делать:
+
+    1. Убрать значение из файла. Секреты приходят только из
+       IConfiguration: локально dotnet user-secrets, в продакшене
+       переменные окружения.
+MSG</code></pre>
+        </div>
+
+        <div class="snip">
+          <p class="snip-head">commit-msg · <b>формат заголовка</b></p>
+<pre><code>CC_PATTERN='^(feat|fix|chore|docs|refactor|test|perf|build|ci|revert|style)(\([a-z0-9._/-]+\))?!?: .+'
+
+# Merge- и revert-коммиты git формирует сам.
+case "$SUBJECT" in
+    Merge\ *|Revert\ *) ;;
+    *)
+        if ! printf '%s\n' "$SUBJECT" | grep -Eq "$CC_PATTERN"; then</code></pre>
+        </div>
+      </div>
+
+      <p>Исключение для <code>Merge</code> и <code>Revert</code> — не послабление: эти
+        заголовки формирует сам git, и требовать от них формата значит запретить мердж.</p>
+    </section>
+
+    <section id="sborka">
+      <p class="sec-label">Рубеж 03</p>
+      <h2>Сборка: то, что нельзя сломать «на время»</h2>
+
+      <dl class="gate-kv">
+        <dt>чем срабатывает</dt>
+        <dd>Свойства сборки, архитектурный тест среди обычных тестов и порог покрытия
+          в работе CI.</dd>
+        <dt>что читает</dt>
+        <dd>Код целиком: собранные сборки и их ссылки, отчёт покрытия по строкам.</dd>
+        <dt>что отбивает</dt>
+        <dd>Любое предупреждение компилятора; ссылку из ядра в адаптер; падение покрытия
+          ниже нижней границы.</dd>
+        <dt class="why-dt">от чего защищает</dt>
+        <dd class="why">От чистой архитектуры, оставшейся только на схеме в README. Ссылку
+          из ядра наружу ставят «на время»: она проходит ревью как мелочь, а снять её потом
+          стоит рефакторинга. Тест делает это невозможным — и падает у автора, а не через
+          месяц.</dd>
+      </dl>
+
+      <div class="snips">
+        <div class="snip">
+          <p class="snip-head">Тест · <b>направление зависимостей</b></p>
+<pre><code>IArchRule rule = Types()
+    .That().ResideInAssembly(CoreAssembly).As("ядро")
+    .Should().NotDependOnAny(
+        Types().That().ResideInAssembly(
+        ApiAssembly, DataAssembly, /* … */))
+    .Because("ядро содержит только порты и модели");
+
+rule.Check(Architecture);</code></pre>
+        </div>
+
+        <div class="snip">
+          <p class="snip-head">CI · <b>порог покрытия</b></p>
+<pre><code>minimum = float(os.environ['COVERAGE_MINIMUM'])
+actual = 100.0 * covered / valid
+
+if actual &lt; minimum:
+    sys.exit(
+        f'::error::Покрытие {actual:.1f}% ниже границы {minimum:.0f}%. '
+        'Границу не двигать — дописать тесты.')</code></pre>
+        </div>
+      </div>
+
+      <p>Нижняя граница покрытия — защита от обвала, а не цель. Инструкция «границу не
+        двигать» лежит в тексте ошибки, потому что читать её будет тот, кто как раз
+        собирался её подвинуть.</p>
+    </section>
+
+    <section id="pr">
+      <p class="sec-label">Рубеж 04</p>
+      <h2>PR: гейт смотрит дифф, а не состояние кода</h2>
+      <p>Это единственный рубеж, который проверяет не код, а <em>изменение</em>. Разница
+        принципиальная: подавление, лежащее в коде давно, гейту невидимо — он ловит только
+        добавленное сейчас. Так и задумано, и цена этого названа в первой записке.</p>
+
+      <dl class="gate-kv">
+        <dt>чем срабатывает</dt>
+        <dd>Гейт целостности и сверки обвязки — работы в быстрой проверке PR.</dd>
+        <dt>что читает</dt>
+        <dd>Гейт — дифф против базовой ветки. Сверки — репозиторий целиком: они проверяют
+          инварианты, а не свойства диффа, поэтому идут и на push.</dd>
+        <dt>что отбивает</dt>
+        <dd>Защищённые пути без метки-разрешения; добавленное подавление проверок; удаление
+          тестов; деструктивную миграцию; правку контракта API. Плюс ссылку на
+          несуществующий файл правил, копию правила вместо ссылки и скрипт, который никто
+          не запускает.</dd>
+        <dt class="why-dt">от чего защищает</dt>
+        <dd class="why">От зелёного чека, добытого <code>#pragma warning disable</code>
+          вместо починки, — красный чек давит непрерывно, и это первое, что модель
+          пробует. И от правила, размноженного копией: правят одну копию, а работают
+          по другой.</dd>
+      </dl>
+
+      <div class="snips">
+        <div class="snip">
+          <p class="snip-head">Гейт · <b>подавления</b></p>
+<pre><code>SUPPRESSION_PATTERNS=(
+    '\[Ignore(\]|\()'
+    '#pragma[[:space:]]+warning[[:space:]]+disable'
+    '&lt;NoWarn[&gt;[:space:]]'
+    'continue-on-error:[[:space:]]*true'
+)</code></pre>
+        </div>
+
+        <div class="snip">
+          <p class="snip-head">Гейт · <b>защищённые пути</b></p>
+<pre><code>PROTECTED_PATTERNS=(
+    'Directory\.Build\.props'
+    '\.editorconfig'
+    'global\.json'
+    # --- Сам пайплайн ---
+    '\.github/.+'
+    '\.githooks/.+'
+    'scripts/.+'
+    # --- Правила и принятые решения ---
+    '\.claude/CLAUDE\.md'
+    '\.claude/agents/.+'
+    'docs/rules/.+'
+    'docs/decisions/.+'
+    …
+)</code></pre>
+        </div>
+
+        <div class="snip">
+          <p class="snip-head">CI · <b>метка как разрешение</b></p>
+<pre><code>env:
+  # Метки снимают запрет на защищённые пути, контракт и
+  # деструктивную миграцию. Ставит их человек — в этом и смысл.
+  GUARD_ALLOW_PROTECTED: &gt;-
+    ${{ contains(github.event.pull_request.labels.*.name,
+        'agent/allow-protected') }}</code></pre>
+        </div>
+
+        <div class="snip">
+          <p class="snip-head">Сверка · <b>копия вместо ссылки</b></p>
+<pre><code># Скользящие окна по COPY_WINDOW слов.
+windows() {
+    normalize "$1" | tr ' ' '\n' | grep -v '^$' \
+    | awk -v n="$COPY_WINDOW" '{ buf[NR % n] = $0
+        if (NR &gt;= n) { s = ""
+            for (i = NR - n + 1; i &lt;= NR; i++) s = s (s == "" ? "" : " ") buf[i % n]
+            print s } }'
+}</code></pre>
+        </div>
+      </div>
+
+      <p>Метка — это разрешение человека, попавшее в CI как переменная окружения. Правка
+        защищённого пути не запрещена навсегда: она запрещена до того, как человек её
+        разрешил. Снять метку себе шаг не может — это отбито поимённо рубежом выше.</p>
+    </section>
+
+    <section id="chernovik">
+      <p class="sec-label">Рубеж 05</p>
+      <h2>Черновик снят: проверяется работающий стек</h2>
+      <p>Тяжёлая проверка идёт не на каждый пуш, а по снятию черновика: она поднимает
+        систему целиком на примерах конфигурации и разговаривает с ней по HTTP.</p>
+
+      <dl class="gate-kv">
+        <dt>чем срабатывает</dt>
+        <dd>Подъём стека в контейнерах на <code>.example</code>-конфигурации и статический
+          анализ безопасности.</dd>
+        <dt>что читает</dt>
+        <dd>Живые ответы эндпоинтов, логи запуска и логи после подстановки заведомого
+          секрета. Исходники — анализатором.</dd>
+        <dt>что отбивает</dt>
+        <dd>Стек, который не встаёт без правок; ответ <code>/health</code> не по форме;
+          эндпоинт, отвечающий без аутентификации; значение секрета, видное в логах.</dd>
+        <dt class="why-dt">от чего защищает</dt>
+        <dd class="why">От репозитория, который собирается, но не поднимается: у чужого
+          человека <code>docker compose up</code> падает на первом шаге, и портфолио
+          превращается в архив исходников. И от эндпоинта, открытого анонимно, — забыть
+          атрибут дешевле, чем заметить, что его забыли.</dd>
+      </dl>
+
+      <div class="snips">
+        <div class="snip">
+          <p class="snip-head">Проверка · <b>аутентификация обязательна</b></p>
+<pre><code>- name: Эндпоинты API требуют аутентификации
+  run: |
+    code="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+      http://localhost:8080/api/v1/state)"
+    test "$code" = "401" || { echo "ожидался 401, получено $code"; exit 1; }</code></pre>
+        </div>
+
+        <div class="snip">
+          <p class="snip-head">Проверка · <b>секретов в логах нет</b></p>
+<pre><code>docker compose logs api &gt; api.log
+# Ищем значения, а не имена: имя поля в логах законно,
+# значение токена или пароля — нет.
+if grep -nE '(Bearer [A-Za-z0-9._-]{20,}|eyJ[A-Za-z0-9_-]{20,}\.|Password=[^;$ ]{4,})' api.log; then
+    echo '::error::В логах старта обнаружено похожее на секрет значение.'
+    exit 1
+fi</code></pre>
+        </div>
+      </div>
+
+      <p>Проверка ищет значения, а не имена полей: имя <code>Token</code> в логе законно,
+        значение — нет. Правило «токены не логируются никогда» тем самым перестаёт быть
+        пожеланием.</p>
+    </section>
+
+    <section id="merzh">
+      <p class="sec-label">Рубеж 06</p>
+      <h2>Мердж: рубеж, которого сегодня нет</h2>
+      <p>Пять рубежей выше — механизмы. Шестой — нет, и притворяться иначе бессмысленно:
+        страница о механической защите, у которой один из пунктов держится на добросовестности,
+        обязана называть этот пункт.</p>
+
+      <dl class="gate-kv">
+        <dt>чем срабатывает</dt>
+        <dd class="why-neg">Ничем. Защита ветки не включена, обязательное ревью от
+          владельцев кода — тоже.</dd>
+        <dt>что читает</dt>
+        <dd class="why-neg">—</dd>
+        <dt>что отбивает</dt>
+        <dd class="why-neg">Сегодня — ничего. Мердж делает человек, потому что так заведено,
+          а не потому, что иначе нельзя.</dd>
+        <dt class="why-dt">от чего защищало бы</dt>
+        <dd class="why">От мерджа без человека. Роль «человек обязан посмотреть» сейчас
+          выполняет гейт целостности рубежом раньше: он краснеет на защищённых путях, пока
+          метку не поставил владелец.</dd>
+      </dl>
+
+      <div class="snip">
+        <p class="snip-head">Владельцы кода · <b>почему проверка не включена</b></p>
+<pre><code># Обязательное ревью от CODEOWNERS в настройках репозитория намеренно НЕ
+# включено. Причина: GitHub не засчитывает апрув автора PR. В репозитории
+# одного человека владелец — единственный code owner, и требование
+# «апрув от CODEOWNERS» заблокировало бы каждый его собственный PR
+# навсегда. Обойти это можно только правом администратора, то есть гейт
+# превратился бы в ритуал, который всегда обходят, — худший вид гейта.</code></pre>
+      </div>
+
+      <p>Причина отказа записана там же, где отказ, — в файле владельцев. Это и есть
+        разница между известной дырой и забытой: известная лежит с объяснением рядом
+        с местом, где её ожидают найти.</p>
+    </section>
+    <section id="granicy">
+      <p class="sec-label">Границы шага</p>
+      <h2>Все семь определений и один отказ</h2>
+      <p>Выше рубеж сессии показан на двух определениях из семи. Вот все семь — и что
+        происходит с командой, которой в списке шага нет. Шагов шесть, а определений семь:
+        у починки их два.</p>
+
+      <figure>
+        <div class="figscroll" tabindex="0" role="group" aria-label="Схема, прокручивается по горизонтали">
+        <svg viewBox="0 0 720 232" role="img" aria-label="Любой вызов Bash от субагента проходит через хук со списком команд шага: разрешённая команда исполняется, неразрешённая получает отказ текстом, и шаг продолжается">
+          <defs>
+            <marker id="a3" viewBox="0 0 10 8" refX="9" refY="4" markerWidth="8" markerHeight="7" orient="auto-start-reverse">
+              <polygon class="mk" points="0,0 10,4 0,8"></polygon>
+            </marker>
+            <marker id="a3g" viewBox="0 0 10 8" refX="9" refY="4" markerWidth="8" markerHeight="7" orient="auto-start-reverse">
+              <polygon class="mk-allow" points="0,0 10,4 0,8"></polygon>
+            </marker>
+            <marker id="a3r" viewBox="0 0 10 8" refX="9" refY="4" markerWidth="8" markerHeight="7" orient="auto-start-reverse">
+              <polygon class="mk-deny" points="0,0 10,4 0,8"></polygon>
+            </marker>
+          </defs>
+
+          <rect class="svg-box-key" x="8" y="80" width="150" height="54" rx="2"></rect>
+          <text class="svg-t" x="83" y="103" text-anchor="middle">Субагент шага</text>
+          <text class="svg-s" x="83" y="120" text-anchor="middle">инструмент Bash</text>
+
+          <line class="svg-line" x1="160" y1="102" x2="234" y2="102" marker-end="url(#a3)"></line>
+          <text class="svg-s" x="197" y="94" text-anchor="middle">вызов</text>
+
+          <rect class="svg-box-key" x="236" y="72" width="164" height="70" rx="2"></rect>
+          <text class="svg-t" x="318" y="98" text-anchor="middle">Хук PreToolUse</text>
+          <text class="svg-s" x="318" y="115" text-anchor="middle">список команд шага,</text>
+          <text class="svg-s" x="318" y="129" text-anchor="middle">разбор по &amp;&amp;, ; и |</text>
+
+          <path class="svg-line svg-allow" d="M402 92 L446 92 L446 50 L490 50" marker-end="url(#a3g)"></path>
+
+          <rect class="svg-box" x="492" y="24" width="220" height="52" rx="2"></rect>
+          <text class="svg-t" x="602" y="45" text-anchor="middle">Команда исполняется</text>
+          <text class="svg-s svg-allow-t" x="602" y="62" text-anchor="middle">в списке шага</text>
+
+          <path class="svg-line svg-deny" d="M402 122 L446 122 L446 168 L490 168" marker-end="url(#a3r)"></path>
+
+          <rect class="svg-box" x="492" y="142" width="220" height="52" rx="2"></rect>
+          <text class="svg-t" x="602" y="163" text-anchor="middle">Отказ текстом</text>
+          <text class="svg-s svg-deny-t" x="602" y="180" text-anchor="middle">вне списка шага</text>
+
+          <path class="svg-line" d="M492 194 L83 194 L83 138" marker-end="url(#a3)" stroke-dasharray="5 4"></path>
+          <text class="svg-s" x="240" y="211">причина видна шагу</text>
+        </svg>
+        </div>
+        <figcaption>На живом прогоне <code>git status</code> прошёл, а
+          <code>dotnet ef migrations list</code> — в том числе спрятанный за
+          <code>git status &amp;&amp; …</code> — получил отказ. Отказ не роняет шаг: субагент
+          получает причину строкой и выбирает другой путь.</figcaption>
+      </figure>
+
+      <div class="refusal">
+        <span>Из стенограммы прогона</span>
+        Команда «pwd» не входит в список разрешённого на шаге<br>
+        Перенаправление вывода запрещено: «gh issue view N 2>&amp;1 | head -100»
+      </div>
+
+      <div class="scroller" tabindex="0" role="group" aria-label="Таблица, прокручивается по горизонтали">
+        <table>
+          <thead>
+            <tr>
+              <th>Шаг</th>
+              <th>Модель</th>
+              <th>Правит файлы</th>
+              <th>Команды</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="step">Триаж</td>
+              <td class="dim">младшая</td>
+              <td class="no">нет</td>
+              <td class="dim">gh issue view · grep · head · tail</td>
+            </tr>
+            <tr>
+              <td class="step">План</td>
+              <td class="dim">сессии</td>
+              <td class="no">нет</td>
+              <td class="dim">gh issue view · grep · head · tail</td>
+            </tr>
+            <tr>
+              <td class="step">Реализация</td>
+              <td class="dim">сессии</td>
+              <td class="yes">да</td>
+              <td class="dim">dotnet build / test / format · git · gh pr create · сценарии обвязки поимённо</td>
+            </tr>
+            <tr>
+              <td class="step">Ревью — корректность</td>
+              <td class="dim">сессии</td>
+              <td class="no">нет</td>
+              <td class="dim">gh pr diff · gh pr view · gh pr checks · gh issue view</td>
+            </tr>
+            <tr>
+              <td class="step">Ревью — безопасность</td>
+              <td class="dim">сессии</td>
+              <td class="no">нет</td>
+              <td class="dim">gh pr diff · gh pr view · gh pr checks</td>
+            </tr>
+            <tr>
+              <td class="step">Оценка случайного падения</td>
+              <td class="dim">младшая</td>
+              <td class="no">нет</td>
+              <td class="dim">gh pr checks · gh run view · grep · head · tail</td>
+            </tr>
+            <tr>
+              <td class="step">Починка</td>
+              <td class="dim">сессии</td>
+              <td class="yes">да</td>
+              <td class="dim">dotnet build / test / format · git · gh pr comment · gh run view</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>Отказ видно — поэтому границу правят, а не обходят. После этого прогона
+        <code>pwd</code> выдали пяти читающим определениям, а потолок ходов триажа подняли
+        до двадцати пяти: рамка оказалась уже, чем чтение, которое требуют его же правила.
+        Молчаливое нарушение такой правки не вызывает — оно не оставляет следа.</p>
+    </section>
+
+    <section id="predely">
+      <p class="sec-label">Предел механики</p>
+      <h2>Где кончается механика и начинается дисциплина</h2>
+      <p>Дыры реализации — те, что видны из фрагментов выше. Каждая известна и ни одна не
+        закрыта надеждой на то, что модель прочитала инструкцию.</p>
+
+      <ul class="limits">
+        <li><b>Список подавлений конечен.</b> Четыре шаблона ловят четыре известных способа.
+          Пятый, ещё не придуманный, пройдёт — поэтому рядом с запретом записан штатный
+          исход: остановиться и написать в PR, что именно не сходится. Остановка
+          с объяснением — нормальный результат, зелёный чек, добытый подавлением, — нет.</li>
+        <li><b>Команды разбираются до поимённых флагов, а не по всем аргументам.</b> Вторую
+          команду в конвейере и в подстановке хук находит, флаги вроде <code>--no-verify</code>
+          знает по имени. Изобретательное применение разрешённой команды — не находит.</li>
+        <li><b>Рубеж коммита включается руками.</b> Хуки не подключаются к клону сами: без
+          <code>git config core.hooksPath</code> их нет вовсе. Подстраховка — те же проверки
+          в CI, но в свежем клоне локального рубежа не существует.</li>
+        <li><b>Копия правила ловится дословно.</b> Скользящее окно в десять слов находит
+          копипаст; тот же смысл, пересказанный своими словами, проходит и расходится
+          с источником молча.</li>
+        <li><b>Гейт видит только изменение.</b> Подавление, лежащее в коде давно, для него
+          не существует — рубеж защищает от новых, а не от накопленных.</li>
+      </ul>
+
+      <p>Полный список того, чего схема не гарантирует, — вместе с ценой каждого рубежа
+        в <a href="../#predely">первой записке</a>.</p>
+    </section>
+
+    <section id="zamysel">
+      <p class="sec-label">Назад</p>
+      <h2>Зачем это всё устроено так</h2>
+      <p>Замысел, изоляция шагов, цена каждого рубежа и полный список известных дыр —
+        в первой записке.</p>
+      <p><a class="next" href="../">← Обвязка агентского цикла</a></p>
+    </section>
+
+    <p class="colophon">
+      Записка обезличена: без названия проекта, предметной области, номеров задач и ссылок
+      на репозиторий. Фрагменты — дословные, из рабочего репозитория; в них сокращены
+      длинные перечисления (отмечено многоточием) и убраны имена, называющие предметную
+      область. Стек, к которому всё это привязано, — .NET 8, GitHub Actions, Claude Code;
+      сама схема от них не зависит.
+    </p>
+
+  </main>
+</div>
+
+</body>
+</html>
