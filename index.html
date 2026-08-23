@@ -1,0 +1,923 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Инженерная записка о том, чем в агентском пайплайне держатся границы: изоляция шагов, механические рубежи, счётчики вне сессии и честный список того, что не гарантировано.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ctext y=%22.9em%22 font-size=%2290%22%3E%F0%9F%94%A9%3C/text%3E%3C/svg%3E">
+<title>Обвязка агентского цикла</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&display=swap">
+
+<style>
+  :root {
+    --paper:    #F0F1EC;
+    --paper-2:  #E7E9E1;
+    --paper-3:  #DDE0D6;
+    --ink:      #16181C;
+    --ink-2:    #565C63;
+    --ink-3:    #5C636B;
+    --rule:     #C6CABF;
+    --rule-2:   #B0B5A8;
+    --stamp:    #2E2FA0;
+    --deny:     #9E2B1C;
+    --allow:    #2C6349;
+
+    --f-display: "Golos Text", "Segoe UI", system-ui, sans-serif;
+    --f-body:    "Literata", Georgia, "Times New Roman", serif;
+    --f-mono:    "JetBrains Mono", "Cascadia Mono", Consolas, monospace;
+
+    color-scheme: light;
+
+    --measure: 34rem;
+    --gutter: clamp(1.15rem, 4vw, 2.5rem);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:    #131519;
+      --paper-2:  #1A1D22;
+      --paper-3:  #22262C;
+      --ink:      #E6E7E1;
+      --ink-2:    #9AA0A7;
+      --ink-3:    #8A9199;
+      --rule:     #2E333A;
+      --rule-2:   #3C424A;
+      --stamp:    #A2A7FF;
+      --deny:     #E28B7A;
+      --allow:    #7FC0A1;
+      color-scheme: dark;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --paper:    #131519;
+    --paper-2:  #1A1D22;
+    --paper-3:  #22262C;
+    --ink:      #E6E7E1;
+    --ink-2:    #9AA0A7;
+    --ink-3:    #8A9199;
+    --rule:     #2E333A;
+    --rule-2:   #3C424A;
+    --stamp:    #A2A7FF;
+    --deny:     #E28B7A;
+    --allow:    #7FC0A1;
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--f-body);
+    font-size: 1.0625rem;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .sheet {
+    max-width: 62rem;
+    margin: 0 auto;
+    padding: 0 var(--gutter) 5rem;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+
+  /* ---------- rail ---------- */
+
+  .rail { display: none; }
+
+  @media (min-width: 68rem) {
+    .sheet {
+      grid-template-columns: 9rem minmax(0, 1fr);
+      column-gap: 2.5rem;
+      max-width: 76rem;
+    }
+    .rail {
+      display: block;
+      grid-column: 1;
+      grid-row: 2;
+      position: sticky;
+      top: 2.5rem;
+      align-self: start;
+      font-family: var(--f-mono);
+      font-size: 11.5px;
+      line-height: 1.5;
+      border-top: 2px solid var(--ink);
+      padding-top: .7rem;
+    }
+    .rail ol { list-style: none; margin: 0; padding: 0; display: grid; gap: .55rem; }
+    .rail a { color: var(--ink-2); text-decoration: none; display: block; }
+    .rail a:hover { color: var(--stamp); }
+    .rail .rail-num { color: var(--ink-3); margin-right: .45rem; }
+    .flow { grid-column: 2; grid-row: 2; }
+    .masthead { grid-column: 1 / -1; grid-row: 1; }
+  }
+
+  .flow { min-width: 0; }
+
+  /* ---------- masthead ---------- */
+
+  .masthead {
+    border-bottom: 2px solid var(--ink);
+    padding: 3.5rem 0 1.6rem;
+    margin-bottom: 2.8rem;
+  }
+
+  .eyebrow {
+    font-family: var(--f-mono);
+    font-size: 11.5px;
+    letter-spacing: .13em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    margin: 0 0 1.4rem;
+  }
+
+  h1 {
+    font-family: var(--f-display);
+    font-weight: 700;
+    font-size: clamp(2.4rem, 7vw, 4rem);
+    line-height: 1.02;
+    letter-spacing: -.022em;
+    text-wrap: balance;
+    margin: 0 0 1.1rem;
+    max-width: 16ch;
+  }
+
+  .lede {
+    font-size: 1.16rem;
+    line-height: 1.55;
+    color: var(--ink-2);
+    max-width: 42ch;
+    margin: 0;
+  }
+
+  .stamp-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 1.4rem;
+    margin-top: 2.2rem;
+  }
+
+  .stamp {
+    font-family: var(--f-mono);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: var(--stamp);
+    border: 2px solid var(--stamp);
+    border-radius: 2px;
+    padding: .5rem .8rem;
+    transform: rotate(-2.4deg);
+    line-height: 1.35;
+    text-align: center;
+    opacity: .92;
+  }
+
+  .figures {
+    font-family: var(--f-mono);
+    font-size: 11.5px;
+    color: var(--ink-2);
+    font-variant-numeric: tabular-nums;
+    line-height: 1.9;
+  }
+  .figures b { color: var(--ink); font-weight: 500; }
+
+  /* ---------- sections ---------- */
+
+  section { margin-bottom: 3.4rem; scroll-margin-top: 2rem; }
+
+  .sec-label {
+    font-family: var(--f-mono);
+    font-size: 11px;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    border-top: 1px solid var(--rule);
+    padding-top: .5rem;
+    margin: 0 0 1.1rem;
+  }
+
+  h2 {
+    font-family: var(--f-display);
+    font-weight: 600;
+    font-size: clamp(1.5rem, 3.4vw, 1.95rem);
+    line-height: 1.15;
+    letter-spacing: -.015em;
+    text-wrap: balance;
+    margin: 0 0 1rem;
+    max-width: 24ch;
+  }
+
+  h3 {
+    font-family: var(--f-display);
+    font-weight: 600;
+    font-size: 1.05rem;
+    letter-spacing: -.005em;
+    margin: 2rem 0 .5rem;
+  }
+
+  p { margin: 0 0 1.05rem; max-width: var(--measure); }
+  p:last-child { margin-bottom: 0; }
+
+  a { color: var(--stamp); }
+  strong { font-weight: 600; }
+  em { font-style: italic; }
+
+  code, .mono {
+    font-family: var(--f-mono);
+    font-size: .855em;
+    background: var(--paper-2);
+    padding: .1em .32em;
+    border-radius: 2px;
+  }
+
+  .pull {
+    font-family: var(--f-display);
+    font-weight: 500;
+    font-size: 1.22rem;
+    line-height: 1.4;
+    letter-spacing: -.012em;
+    color: var(--ink);
+    border-left: 3px solid var(--stamp);
+    padding: .15rem 0 .15rem 1.1rem;
+    margin: 1.8rem 0;
+    max-width: 34ch;
+  }
+
+  /* ---------- invariants ---------- */
+
+  .cards { display: grid; gap: 1.4rem; margin-top: 1.8rem; }
+
+  .card {
+    border-top: 1px solid var(--rule-2);
+    padding-top: 1rem;
+    display: grid;
+    gap: .75rem;
+  }
+
+  @media (min-width: 46rem) {
+    .card { grid-template-columns: 13rem minmax(0, 1fr); column-gap: 2rem; }
+    .card-rule { grid-column: 1; }
+    .card-body { grid-column: 2; }
+  }
+
+  .card-rule {
+    font-family: var(--f-display);
+    font-weight: 600;
+    font-size: 1rem;
+    line-height: 1.3;
+    letter-spacing: -.008em;
+  }
+
+  .card-body { display: grid; gap: .5rem; }
+  .card-mech {
+    font-family: var(--f-mono);
+    font-size: 11px;
+    color: var(--ink-3);
+    letter-spacing: .04em;
+  }
+
+  .kv { display: grid; gap: .18rem; }
+  .kv > dt {
+    font-family: var(--f-mono);
+    font-size: 10.5px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+  .kv > dd { margin: 0; font-size: .95rem; line-height: 1.52; }
+  .kv.cost > dd { color: var(--ink-2); }
+
+  /* ---------- table ---------- */
+
+  .scroller { overflow-x: auto; margin: 1.6rem 0; }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    min-width: 40rem;
+    font-family: var(--f-mono);
+    font-size: 12px;
+    line-height: 1.45;
+  }
+  th, td {
+    text-align: left;
+    vertical-align: top;
+    padding: .58rem .8rem .58rem 0;
+    border-bottom: 1px solid var(--rule);
+  }
+  thead th {
+    border-bottom: 1.5px solid var(--ink);
+    font-weight: 500;
+    letter-spacing: .09em;
+    text-transform: uppercase;
+    font-size: 10.5px;
+    color: var(--ink-3);
+    white-space: nowrap;
+  }
+  td.step { color: var(--ink); font-weight: 500; white-space: nowrap; }
+  td.dim { color: var(--ink-2); }
+
+  table.t-prose { font-family: var(--f-body); font-size: 13.5px; line-height: 1.45; min-width: 44rem; }
+  table.t-prose td.tier {
+    font-family: var(--f-mono);
+    font-size: 11px;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: var(--ink);
+    white-space: nowrap;
+    width: 8.5rem;
+    border-right: 1px solid var(--rule);
+    padding-right: 1rem;
+    padding-top: .7rem;
+  }
+  table.t-prose td.mech { font-family: var(--f-mono); font-size: 11.5px; width: 15rem; color: var(--ink-2); }
+  table.t-prose td.stops { color: var(--ink); }
+  .no  { color: var(--deny); }
+  .yes { color: var(--allow); }
+
+  /* ---------- snippets ---------- */
+
+  .snips { display: grid; gap: 1.1rem; margin-top: 1.6rem; }
+  @media (min-width: 54rem) { .snips { grid-template-columns: 1fr 1fr; align-items: start; } }
+
+  .snip {
+    border: 1px solid var(--rule);
+    border-radius: 2px;
+    background: var(--paper-2);
+    overflow: hidden;
+  }
+  .snip-head {
+    font-family: var(--f-mono);
+    font-size: 10.5px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    background: var(--paper);
+    border-bottom: 1px solid var(--rule);
+    padding: .5rem .85rem;
+    margin: 0;
+  }
+  .snip-head b { color: var(--ink); font-weight: 500; }
+  .snip pre {
+    margin: 0;
+    padding: .8rem .85rem;
+    overflow-x: auto;
+    font-family: var(--f-mono);
+    font-size: 11.5px;
+    line-height: 1.6;
+    color: var(--ink);
+    tab-size: 2;
+  }
+  .snip pre code { background: none; padding: 0; font-size: inherit; }
+  .snip-head code { background: var(--paper-3); }
+
+  /* ---------- refusal block ---------- */
+
+  .refusal {
+    font-family: var(--f-mono);
+    font-size: 12.5px;
+    line-height: 1.6;
+    color: var(--deny);
+    border: 1px dashed var(--deny);
+    border-radius: 2px;
+    padding: .85rem 1rem;
+    margin: 1.6rem 0;
+    max-width: var(--measure);
+  }
+  .refusal span { display: block; color: var(--ink-3); font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; margin-bottom: .5rem; }
+
+  /* ---------- figures ---------- */
+
+  figure { margin: 2rem 0; }
+  .figscroll { overflow-x: auto; }
+  figure svg { display: block; width: 100%; height: auto; color: var(--ink); min-width: 40rem; }
+  figcaption {
+    font-size: .88rem;
+    line-height: 1.5;
+    color: var(--ink-2);
+    margin-top: .75rem;
+    max-width: 60ch;
+  }
+  .svg-box { fill: var(--paper-2); stroke: var(--rule-2); stroke-width: 1.25; }
+  .svg-box-key { fill: var(--paper-3); stroke: var(--ink); stroke-width: 1.5; }
+  .svg-t { fill: var(--ink); font-family: var(--f-display); font-size: 13px; font-weight: 500; }
+  .svg-s { fill: var(--ink-2); font-family: var(--f-mono); font-size: 10.5px; }
+  .svg-line { stroke: var(--ink-2); stroke-width: 1.25; fill: none; }
+  .svg-deny { stroke: var(--deny); }
+  .svg-deny-t { fill: var(--deny); }
+  .svg-allow { stroke: var(--allow); }
+  .svg-allow-t { fill: var(--allow); }
+  .mk      { fill: var(--ink-2); }
+  .mk-deny { fill: var(--deny); }
+  .mk-allow{ fill: var(--allow); }
+
+  /* ---------- limits ---------- */
+
+  .limits { display: grid; gap: 1.1rem; margin-top: 1.6rem; list-style: none; padding: 0; }
+  .limits li {
+    border-left: 2px solid var(--rule-2);
+    padding-left: 1rem;
+    max-width: var(--measure);
+    font-size: .97rem;
+    line-height: 1.55;
+  }
+  .limits b { font-family: var(--f-display); font-weight: 600; }
+
+  /* ---------- colophon ---------- */
+
+  .colophon {
+    border-top: 2px solid var(--ink);
+    margin-top: 4rem;
+    padding-top: 1.2rem;
+    font-family: var(--f-mono);
+    font-size: 11.5px;
+    line-height: 1.75;
+    color: var(--ink-3);
+    max-width: 52ch;
+  }
+
+  .next {
+    font-family: var(--f-display);
+    font-weight: 600;
+    font-size: 1.16rem;
+    letter-spacing: -.012em;
+    text-decoration: none;
+    border-bottom: 2px solid var(--stamp);
+    padding-bottom: .1rem;
+  }
+  .next:hover { color: var(--ink); border-color: var(--ink); }
+
+  a:focus-visible, .rail a:focus-visible,
+  .scroller:focus-visible, .figscroll:focus-visible, .snip pre:focus-visible {
+    outline: 2px solid var(--stamp);
+    outline-offset: 3px;
+    border-radius: 1px;
+  }
+</style>
+
+</head>
+<body>
+<div class="sheet">
+
+  <header class="masthead">
+    <p class="eyebrow">Записка первая из двух · обезличено</p>
+    <h1>Обвязка агентского цикла</h1>
+    <p class="lede">Задачу от issue до мерджа ведёт агент; человек оставляет за собой
+      апрув плана и мердж. Записка о том, чем в такой схеме держатся границы.</p>
+    <div class="stamp-row">
+      <div class="stamp">Механически,<br>а не добросовестно</div>
+      <div class="figures">
+        <b>6</b> рубежей защиты · <b>6</b> шагов работы<br>
+        <b>7</b> определений субагентов · <b>7</b> файлов правил<br>
+        <b>10</b> скриптов обвязки · потолки <b>3</b> и <b>2</b>
+      </div>
+    </div>
+  </header>
+
+  <nav class="rail" aria-label="Разделы">
+    <ol>
+      <li><a href="#zadacha"><span class="rail-num">01</span>Задача</a></li>
+      <li><a href="#izolyaciya"><span class="rail-num">02</span>Изоляция шага</a></li>
+      <li><a href="#cikl"><span class="rail-num">03</span>Цикл</a></li>
+      <li><a href="#rubezhi"><span class="rail-num">04</span>Шесть рубежей</a></li>
+      <li><a href="#cena"><span class="rail-num">05</span>Цена</a></li>
+      <li><a href="#samoproverka"><span class="rail-num">06</span>Самопроверка</a></li>
+      <li><a href="#predely"><span class="rail-num">07</span>Пределы</a></li>
+      <li><a href="#praktika"><span class="rail-num">08</span>Практика</a></li>
+    </ol>
+  </nav>
+
+  <main class="flow">
+
+    <section id="zadacha">
+      <p class="sec-label">Задача</p>
+      <h2>Промпт не является границей</h2>
+      <p>Агенту можно написать «не подавляй проверки». Он подавит их тогда, когда очередная
+        попытка починки не сойдётся: красный чек давит непрерывно, а инструкция не весит
+        ничего. <code>#pragma warning disable</code> — не нарушение правила, а оставшийся
+        доступным способ добиться цели.</p>
+      <p class="pull">Граница, которую можно не соблюсти без последствий, — это не граница,
+        а пожелание в адрес модели.</p>
+      <p>Отсюда два требования: сделать границу механической там, где это возможно, и
+        назвать её дисциплинарной там, где нет.</p>
+    </section>
+
+    <section id="izolyaciya">
+      <p class="sec-label">Изоляция шага</p>
+      <h2>Оркестратор передаёт номер и больше ничего</h2>
+      <p>Задачу ведёт оркестратор — основная сессия. Шаги он не выполняет: каждый поручает
+        субагенту с чистым контекстом, своей моделью, своим набором инструментов и своим
+        файлом правил. Содержательного не передаёт ничего, кроме номера задачи или PR.</p>
+      <p>Агент, проверяющий собственную работу, проверку не выполняет: пересказ автора — то
+        самое утверждение, которое ревью и обязано проверить.</p>
+      <p>Шагов работы шесть, а определений субагентов семь: у починки их два. Решает, настоящее
+        падение или случайное, отдельный субагент — читающий, без права правки. Классификатор,
+        у которого есть право чинить, всегда найдёт что починить.</p>
+
+      <figure>
+        <div class="figscroll" tabindex="0" role="group" aria-label="Схема, прокручивается по горизонтали">
+        <svg viewBox="0 0 720 250" role="img" aria-label="Оркестратор передаёт субагенту только номер задачи; состояние — issue, дифф PR и код — субагент читает сам, а пересказ работы ему не передаётся">
+          <defs>
+            <marker id="a1" viewBox="0 0 10 8" refX="9" refY="4" markerWidth="8" markerHeight="7" orient="auto-start-reverse">
+              <polygon class="mk" points="0,0 10,4 0,8"></polygon>
+            </marker>
+            <marker id="a1d" viewBox="0 0 10 8" refX="9" refY="4" markerWidth="8" markerHeight="7" orient="auto-start-reverse">
+              <polygon class="mk-deny" points="0,0 10,4 0,8"></polygon>
+            </marker>
+          </defs>
+
+          <rect class="svg-box-key" x="8" y="82" width="168" height="54" rx="2"></rect>
+          <text class="svg-t" x="92" y="105" text-anchor="middle">Оркестратор</text>
+          <text class="svg-s" x="92" y="122" text-anchor="middle">основная сессия</text>
+
+          <line class="svg-line" x1="178" y1="98" x2="292" y2="98" marker-end="url(#a1)"></line>
+          <text class="svg-s" x="235" y="90" text-anchor="middle">«PR #N»</text>
+
+          <line class="svg-line svg-deny" x1="178" y1="126" x2="292" y2="126" marker-end="url(#a1d)" stroke-dasharray="5 4"></line>
+          <text class="svg-s svg-deny-t" x="235" y="150" text-anchor="middle">пересказ работы</text>
+          <line class="svg-line svg-deny" x1="228" y1="118" x2="242" y2="134"></line>
+          <line class="svg-line svg-deny" x1="242" y1="118" x2="228" y2="134"></line>
+
+          <rect class="svg-box-key" x="294" y="82" width="172" height="54" rx="2"></rect>
+          <text class="svg-t" x="380" y="105" text-anchor="middle">Субагент шага</text>
+          <text class="svg-s" x="380" y="122" text-anchor="middle">чистый контекст</text>
+
+          <text class="svg-s" x="380" y="156" text-anchor="middle">состояние читает сам</text>
+
+          <path class="svg-line" d="M468 100 L514 100 L514 41 L558 41" marker-end="url(#a1)"></path>
+          <path class="svg-line" d="M468 109 L558 109" marker-end="url(#a1)"></path>
+          <path class="svg-line" d="M468 118 L514 118 L514 177 L558 177" marker-end="url(#a1)"></path>
+
+          <rect class="svg-box" x="562" y="18" width="150" height="46" rx="2"></rect>
+          <text class="svg-t" x="637" y="38" text-anchor="middle">Задача</text>
+          <text class="svg-s" x="637" y="54" text-anchor="middle">gh issue view</text>
+
+          <rect class="svg-box" x="562" y="86" width="150" height="46" rx="2"></rect>
+          <text class="svg-t" x="637" y="106" text-anchor="middle">Дифф PR</text>
+          <text class="svg-s" x="637" y="122" text-anchor="middle">gh pr diff</text>
+
+          <rect class="svg-box" x="562" y="154" width="150" height="46" rx="2"></rect>
+          <text class="svg-t" x="637" y="174" text-anchor="middle">Код в ветке</text>
+          <text class="svg-s" x="637" y="190" text-anchor="middle">Read / Grep</text>
+
+          <text class="svg-s" x="8" y="232">Сплошное — что передаётся. Пунктир — что запрещено передавать.</text>
+        </svg>
+        </div>
+        <figcaption>Экономия ходов тут ни при чём: состояние из первых рук проверяемо,
+          пересказ — нет.</figcaption>
+      </figure>
+
+    </section>
+
+    <section id="cikl">
+      <p class="sec-label">Цикл</p>
+      <h2>Состояние задачи живёт снаружи сессии</h2>
+      <p>Сессия прерывается всегда. Поэтому состояние задачи вынесено наружу: стадия и
+        решения — в журнал в ветке, план — в комментарий, разрешения и счётчики — в метки.
+        Новая сессия начинается не с нуля и не с нуля считает попытки.</p>
+
+      <figure>
+        <div class="figscroll" tabindex="0" role="group" aria-label="Схема, прокручивается по горизонтали">
+        <svg viewBox="0 0 800 330" role="img" aria-label="Путь задачи: триаж, план, реализация, CI, ревью, мердж; красный CI уводит в починку с потолком в три попытки, замечания ревью — в починку с потолком в два круга, исчерпание потолка передаёт задачу человеку">
+          <defs>
+            <marker id="a2" viewBox="0 0 10 8" refX="9" refY="4" markerWidth="8" markerHeight="7" orient="auto-start-reverse">
+              <polygon class="mk" points="0,0 10,4 0,8"></polygon>
+            </marker>
+          </defs>
+
+          <rect class="svg-box" x="8" y="40" width="100" height="46" rx="2"></rect>
+          <text class="svg-t" x="58" y="69" text-anchor="middle">Триаж</text>
+
+          <rect class="svg-box" x="146" y="40" width="100" height="46" rx="2"></rect>
+          <text class="svg-t" x="196" y="69" text-anchor="middle">План</text>
+
+          <rect class="svg-box" x="284" y="40" width="100" height="46" rx="2"></rect>
+          <text class="svg-t" x="334" y="69" text-anchor="middle">Реализация</text>
+
+          <rect class="svg-box-key" x="422" y="40" width="100" height="46" rx="2"></rect>
+          <text class="svg-t" x="472" y="69" text-anchor="middle">CI</text>
+
+          <rect class="svg-box" x="560" y="40" width="100" height="46" rx="2"></rect>
+          <text class="svg-t" x="610" y="69" text-anchor="middle">Ревью</text>
+
+          <rect class="svg-box" x="698" y="40" width="94" height="46" rx="2"></rect>
+          <text class="svg-t" x="745" y="69" text-anchor="middle">Мердж</text>
+
+          <line class="svg-line" x1="110" y1="63" x2="142" y2="63" marker-end="url(#a2)"></line>
+          <line class="svg-line" x1="248" y1="63" x2="280" y2="63" marker-end="url(#a2)"></line>
+          <line class="svg-line" x1="386" y1="63" x2="418" y2="63" marker-end="url(#a2)"></line>
+          <line class="svg-line" x1="524" y1="63" x2="556" y2="63" marker-end="url(#a2)"></line>
+          <line class="svg-line" x1="662" y1="63" x2="694" y2="63" marker-end="url(#a2)"></line>
+
+          <text class="svg-s" x="126" y="28" text-anchor="middle">ready</text>
+          <text class="svg-s" x="264" y="28" text-anchor="middle">апрув</text>
+          <text class="svg-s" x="402" y="28" text-anchor="middle">PR</text>
+          <text class="svg-s" x="540" y="28" text-anchor="middle">зелёный</text>
+          <text class="svg-s" x="678" y="28" text-anchor="middle">approve</text>
+
+          <rect class="svg-box" x="422" y="196" width="100" height="46" rx="2"></rect>
+          <text class="svg-t" x="472" y="225" text-anchor="middle">Починка</text>
+
+          <line class="svg-line svg-deny" x1="452" y1="88" x2="452" y2="192" marker-end="url(#a2)"></line>
+          <text class="svg-s svg-deny-t" x="444" y="140" text-anchor="end">красный</text>
+
+          <line class="svg-line" x1="494" y1="192" x2="494" y2="90" marker-end="url(#a2)"></line>
+          <text class="svg-s" x="502" y="140">до 3 попыток</text>
+
+          <path class="svg-line" d="M610 88 L610 219 L526 219" marker-end="url(#a2)"></path>
+          <path class="svg-line" d="M526 208 L600 208 L600 90" marker-end="url(#a2)"></path>
+          <text class="svg-s" x="618" y="160">замечания и повтор</text>
+          <text class="svg-s" x="618" y="176">круга, до 2</text>
+
+          <path class="svg-line" d="M472 244 L472 286 L596 286" marker-end="url(#a2)"></path>
+          <text class="svg-s" x="486" y="302">потолок исчерпан</text>
+
+          <rect class="svg-box" x="598" y="264" width="194" height="44" rx="2"></rect>
+          <text class="svg-t" x="695" y="291" text-anchor="middle">Разбирается человек</text>
+        </svg>
+        </div>
+        <figcaption>Потолки — не оптимизация расходов. Агент, чинящий одно и то же в
+          четвёртый раз, чинит уже не то, что сломано.</figcaption>
+      </figure>
+
+      <p>Режима два — шаги запускает CI по событиям либо оркестратор локально, — и разница
+        между ними ровно одна: кто нажимает на старт.</p>
+      <p>Метки делятся на два класса. <code>in-progress</code>, <code>plan/proposed</code>,
+        <code>fix/N</code> вешает агент — это отчёты о собственном состоянии.
+        <code>ready</code>, <code>plan/approved</code>, <code>allow-protected</code> ставит
+        владелец — это разрешения.</p>
+    </section>
+
+    <section id="rubezhi">
+      <p class="sec-label">Шесть рубежей</p>
+      <h2>Что стоит между агентом и мерджем</h2>
+      <p>Ни один рубеж не полагается на то, что агент прочитал инструкцию. Пять из шести —
+        отдельные механизмы: срабатывают сами и краснеют, если их обойти. Шестой сегодня
+        не механизм, и в таблице это сказано прямо. Внутри шаговых workflow не живёт ни один
+        из них — поэтому в обоих режимах работы они одинаковы.</p>
+
+      <figure>
+        <div class="figscroll" tabindex="0" role="group" aria-label="Схема, прокручивается по горизонтали">
+        <svg viewBox="0 0 800 96" role="img" aria-label="Шесть рубежей по порядку: сессия, коммит, сборка, PR, снятие черновика, мердж">
+          <defs>
+            <marker id="a4" viewBox="0 0 10 8" refX="9" refY="4" markerWidth="7" markerHeight="6" orient="auto-start-reverse">
+              <polygon class="mk" points="0,0 10,4 0,8"></polygon>
+            </marker>
+          </defs>
+
+          <rect class="svg-box-key" x="10" y="22" width="110" height="42" rx="2"></rect>
+          <text class="svg-t" x="65" y="48" text-anchor="middle">Сессия</text>
+          <line class="svg-line" x1="122" y1="43" x2="140" y2="43" marker-end="url(#a4)"></line>
+
+          <rect class="svg-box" x="144" y="22" width="110" height="42" rx="2"></rect>
+          <text class="svg-t" x="199" y="48" text-anchor="middle">Коммит</text>
+          <line class="svg-line" x1="256" y1="43" x2="274" y2="43" marker-end="url(#a4)"></line>
+
+          <rect class="svg-box" x="278" y="22" width="110" height="42" rx="2"></rect>
+          <text class="svg-t" x="333" y="48" text-anchor="middle">Сборка</text>
+          <line class="svg-line" x1="390" y1="43" x2="408" y2="43" marker-end="url(#a4)"></line>
+
+          <rect class="svg-box" x="412" y="22" width="110" height="42" rx="2"></rect>
+          <text class="svg-t" x="467" y="48" text-anchor="middle">PR</text>
+          <line class="svg-line" x1="524" y1="43" x2="542" y2="43" marker-end="url(#a4)"></line>
+
+          <rect class="svg-box" x="546" y="22" width="110" height="42" rx="2"></rect>
+          <text class="svg-t" x="601" y="48" text-anchor="middle" font-size="11.5">Черновик снят</text>
+          <line class="svg-line" x1="658" y1="43" x2="676" y2="43" marker-end="url(#a4)"></line>
+
+          <rect class="svg-box-key" x="680" y="22" width="110" height="42" rx="2"></rect>
+          <text class="svg-t" x="735" y="48" text-anchor="middle">Мердж</text>
+
+          <text class="svg-s" x="10" y="88">дешёвый отказ</text>
+          <text class="svg-s" x="790" y="88" text-anchor="end">дорогой отказ</text>
+        </svg>
+        </div>
+        <figcaption>Порядок не декоративный. Команда, отбитая хуком, стоит одного хода;
+          подавление, пойманное гейтом, — круга починки.</figcaption>
+      </figure>
+
+      <div class="scroller" tabindex="0" role="group" aria-label="Таблица, прокручивается по горизонтали">
+        <table class="t-prose">
+          <thead>
+            <tr><th>Рубеж</th><th>Механизм</th><th>Что останавливает</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="tier" rowspan="3">Сессия</td>
+              <td class="mech">набор инструментов шага</td>
+              <td class="stops">Читающему шагу не выданы <code>Edit</code> и <code>Write</code>:
+                правка ему просто недоступна.</td>
+            </tr>
+            <tr>
+              <td class="mech">хук PreToolUse</td>
+              <td class="stops">Команда вне списка шага — отказ до исполнения. Разбор идёт дальше
+                первого слова: подстановка, перенаправление вывода и фоновый запуск
+                отклоняются целиком.</td>
+            </tr>
+            <tr>
+              <td class="mech">потолок ходов, модель шага</td>
+              <td class="stops">Потолок ходов — у двух определений из семи, остальным он
+                намеренно не поставлен. Классификаторы идут младшей моделью и только читают:
+                у оценки «падение случайное или настоящее» нет права чинить.</td>
+            </tr>
+
+            <tr>
+              <td class="tier" rowspan="2">Коммит</td>
+              <td class="mech">pre-commit → gitleaks</td>
+              <td class="stops">Секрет в индексе. Инструмента нет — коммит отклонён, а не
+                пропущен молча.</td>
+            </tr>
+            <tr>
+              <td class="mech">commit-msg</td>
+              <td class="stops">Заголовок не по Conventional Commits: коммит отклонён до
+                создания, а не отмечен на ревью.</td>
+            </tr>
+
+            <tr>
+              <td class="tier" rowspan="3">Сборка</td>
+              <td class="mech">TreatWarningsAsErrors</td>
+              <td class="stops">Любое предупреждение компилятора — красная сборка.</td>
+            </tr>
+            <tr>
+              <td class="mech">архитектурный тест</td>
+              <td class="stops">Ссылка из ядра наружу. Направление зависимостей проверяется
+                тестом, а не соглашением, — сломать его временно нельзя.</td>
+            </tr>
+            <tr>
+              <td class="mech">порог покрытия</td>
+              <td class="stops">Падение покрытия ниже нижней границы.</td>
+            </tr>
+
+            <tr>
+              <td class="tier" rowspan="3">PR</td>
+              <td class="mech">гейт целостности</td>
+              <td class="stops">Читает дифф PR: защищённые пути без
+                метки-разрешения, подавления проверок, удаление тестов, деструктивная миграция,
+                правка контракта API.</td>
+            </tr>
+            <tr>
+              <td class="mech">сверки обвязки</td>
+              <td class="stops">Ссылка на несуществующий файл правил, шаг без ссылки на свои
+                правила, копия правила вместо ссылки, скрипт, который никто не запускает.</td>
+            </tr>
+            <tr>
+              <td class="mech">пакеты и история</td>
+              <td class="stops">Известная уязвимость в зависимости; секрет, попавший в историю
+                ветки.</td>
+            </tr>
+
+            <tr>
+              <td class="tier" rowspan="2">Черновик снят</td>
+              <td class="mech">подъём стека</td>
+              <td class="stops">Стек не встаёт на <code>.example</code>-конфигурации без правок;
+                анонимный <code>/health</code> отвечает не по форме; эндпоинт отвечает без
+                аутентификации; значение секрета видно в логах старта.</td>
+            </tr>
+            <tr>
+              <td class="mech">CodeQL</td>
+              <td class="stops">Статически обнаружимые дефекты безопасности.</td>
+            </tr>
+
+            <tr>
+              <td class="tier">Мердж</td>
+              <td class="mech">CODEOWNERS</td>
+              <td class="stops"><strong>Сегодня — ничего.</strong> Защита ветки не включена,
+                а обязательное ревью от CODEOWNERS не включается намеренно: файл называет
+                владельцев защищённых путей, но останавливает правку гейт рубежом раньше.
+                Единственный из шести, который держится на порядке, а не на механике.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="cena">
+      <p class="sec-label">Цена</p>
+      <h2>Чем оплачен каждый рубеж</h2>
+      <p>Механизм без названной цены — реклама. Шесть правил и то, во что каждое обходится.</p>
+
+      <div class="cards">
+
+        <article class="card">
+          <div class="card-rule">Шаг не видит контекста предыдущего шага</div>
+          <div class="card-body">
+            <div class="card-mech">отдельный субагент на шаг</div>
+            <p>Каждый шаг заново читает состояние: ходов больше, чем у одного разговора.</p>
+          </div>
+        </article>
+
+        <article class="card">
+          <div class="card-rule">У правил шага один источник</div>
+          <div class="card-body">
+            <div class="card-mech">сверка ссылок и копий</div>
+            <p>Ловится дословная копия, не пересказ своими словами: сравнение идёт скользящим
+              окном в десять слов.</p>
+          </div>
+        </article>
+
+        <article class="card">
+          <div class="card-rule">Читающий шаг физически не пишет</div>
+          <div class="card-body">
+            <div class="card-mech">набор инструментов без правки</div>
+            <p>Публикация наружу переходит оркестратору: комментарии, метки и вердикты пишет он.</p>
+          </div>
+        </article>
+
+        <article class="card">
+          <div class="card-rule">Разрешения ставит человек</div>
+          <div class="card-body">
+            <div class="card-mech">два класса меток, защищённые пути</div>
+            <p>Две точки ожидания человека на задачу — апрув плана и мердж.</p>
+          </div>
+        </article>
+
+        <article class="card">
+          <div class="card-rule">Зелёный чек подавлением не считается</div>
+          <div class="card-body">
+            <div class="card-mech">гейт целостности по диффу</div>
+            <p>Гейт смотрит дифф, поэтому подавление, лежащее в коде давно, для него
+              невидимо: он ловит только добавленное сейчас.</p>
+          </div>
+        </article>
+
+        <article class="card">
+          <div class="card-rule">Счётчики переживают обрыв сессии</div>
+          <div class="card-body">
+            <div class="card-mech">метки fix/N и review/N на PR</div>
+            <p>Окно между первой правкой и пушем не защищено ничем. Отсюда правило пушить
+              ветку рано и часто.</p>
+          </div>
+        </article>
+
+      </div>
+    </section>
+
+    <section id="samoproverka">
+      <p class="sec-label">Самопроверка</p>
+      <h2>Проверка, которую перестали запускать, хуже отсутствующей</h2>
+      <p>Рубежи сами лежат скриптами в репозитории и запускаются шагами CI — и ровно этот
+        провод не проверял никто. Шаг убрали при правке: скрипт остался, выглядит работающим
+        и не запускается никогда. Отсюда сверка, которая требует, чтобы каждый скрипт был вызван хотя бы одним
+        workflow — или освобождён маркером с письменной причиной.</p>
+
+      <p class="pull">Сценарий засчитан, только когда его видели красным при выключенной
+        проверке.</p>
+      <p>В одной из правок каждый новый запрет получил сценарий, а обе
+        новые выдачи — ни одного: выдача, не совпадавшая ни с чем, проехала при тридцати двух
+        зелёных сценариях. Покрывают то, что запрещают, и забывают то, что разрешают.</p>
+    </section>
+
+    <section id="predely">
+      <p class="sec-label">Пределы</p>
+      <h2>Чего эта схема не гарантирует</h2>
+      <p>Каждая строка — известная дыра, а не забытая.</p>
+
+      <ul class="limits">
+        <li><b>Пересказ работы ревьюеру запрещён дисциплиной, а не механикой.</b> Набор
+          инструментов ограничить можно, содержимое задачи — нельзя.</li>
+        <li><b>Пересказ правила своими словами не ловится.</b> Сверка сравнивает дословные
+          совпадения; тот же смысл другими словами проходит и расходится с источником молча.</li>
+        <li><b>Граница команд разбирает команды и поимённые флаги, а не все аргументы.</b>
+          Вторую команду в конвейере она ловит, изобретательное применение разрешённой — нет.</li>
+        <li><b>Список запрещённых подавлений конечен.</b> Неизвестный способ пройдёт — поэтому
+          рядом записан штатный исход: остановка с объяснением.</li>
+        <li><b>Рамка шага может оказаться уже его собственных правил.</b> Живой прогон показал:
+          потолок ходов у триажа расходился с тем, сколько чтения требуют его же правила.</li>
+        <li><b>Рубеж коммита включается руками.</b> Хуки не подключаются к клону сами: без
+          <code>git config core.hooksPath</code> их нет вовсе. Подстраховка — те же проверки
+          в CI, но локальный рубеж в свежем клоне отсутствует.</li>
+        <li><b>Последний рубеж пока не механизм.</b> Защита ветки на мердж не включена,
+          и остановить его сегодня нечем: работает порядок, а не проверка.</li>
+      </ul>
+    </section>
+
+    <section id="praktika">
+      <p class="sec-label">Дальше</p>
+      <h2>Как это сделано в коде</h2>
+      <p>Эта записка о замысле. Вторая — о реализации: сквозная карта пути задачи со всеми
+        рубежами на своих местах, каждый рубеж по отдельности с фрагментом из репозитория,
+        отказы из живой стенограммы и границы команд по шагам.</p>
+      <p><a class="next" href="practice/">Шесть рубежей на практике →</a></p>
+    </section>
+
+    <p class="colophon">
+      Записка обезличена: без названия проекта, предметной области, номеров задач и ссылок
+      на репозиторий. Стек, к которому всё это привязано, — .NET 8, GitHub Actions, Claude Code;
+      сама схема от них не зависит. Формулировки, фрагменты кода, отказы и числа взяты из
+      рабочего репозитория, а не сочинены для изложения; в примерах сокращены длинные
+      перечисления и убраны имена, называющие предметную область.
+    </p>
+
+  </main>
+</div>
+
+</body>
+</html>
